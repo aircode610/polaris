@@ -48,6 +48,123 @@ class ResearchQuestion(BaseModel):
     )
 
 
+class MCTSNode(BaseModel):
+    """Represents a node in the MCTS search tree for research planning."""
+    
+    node_id: str = Field(description="Unique identifier for this node")
+    parent_id: Optional[str] = Field(default=None, description="Parent node ID")
+    children_ids: list[str] = Field(default_factory=list, description="Child node IDs")
+    depth: int = Field(description="Depth in the tree (0 for root)")
+    
+    # Research path information
+    research_angle: str = Field(
+        description="The specific research angle/perspective this node represents"
+    )
+    research_focus: str = Field(
+        description="Detailed description of what to focus on in this research path"
+    )
+    
+    # MCTS statistics
+    visit_count: int = Field(default=0, description="Number of times this node was visited")
+    total_value: float = Field(default=0.0, description="Cumulative value from simulations")
+    
+    # Evaluation scores (0-1 scale)
+    comprehensiveness_score: float = Field(
+        default=0.0,
+        description="Expected comprehensiveness of this research path (0-1)",
+        ge=0.0,
+        le=1.0
+    )
+    insight_score: float = Field(
+        default=0.0,
+        description="Expected depth and insight potential (0-1)",
+        ge=0.0,
+        le=1.0
+    )
+    instruction_following_score: float = Field(
+        default=0.0,
+        description="Alignment with original research brief (0-1)",
+        ge=0.0,
+        le=1.0
+    )
+    feasibility_score: float = Field(
+        default=0.0,
+        description="Likelihood of finding good information (0-1)",
+        ge=0.0,
+        le=1.0
+    )
+    
+    # State flags
+    is_terminal: bool = Field(default=False, description="Whether this is a terminal node")
+    is_fully_expanded: bool = Field(default=False, description="All children have been generated")
+
+
+class ResearchAngle(BaseModel):
+    """A single research angle generated during MCTS expansion."""
+    
+    research_angle: str = Field(description="Name of this research angle (4-8 words)")
+    research_focus: str = Field(description="Detailed description of what to focus on in this research path (2-4 sentences)")
+
+
+class ResearchAngles(BaseModel):
+    """Collection of research angles for node expansion."""
+    
+    angles: list[ResearchAngle] = Field(
+        description="List of diverse research angles to explore",
+        min_items=1,
+        max_items=5
+    )
+
+
+class PathEvaluation(BaseModel):
+    """Evaluation of a research path without executing research."""
+    
+    comprehensiveness_score: float = Field(
+        description="Expected comprehensiveness score (0-1): Would this path cover important aspects?",
+        ge=0.0,
+        le=1.0
+    )
+    insight_score: float = Field(
+        description="Expected insight/depth score (0-1): Would it uncover deep insights?",
+        ge=0.0,
+        le=1.0
+    )
+    instruction_following_score: float = Field(
+        description="Alignment with research brief (0-1): How well does it match objectives?",
+        ge=0.0,
+        le=1.0
+    )
+    feasibility_score: float = Field(
+        description="Likelihood of finding good information (0-1): Is information available?",
+        ge=0.0,
+        le=1.0
+    )
+    reasoning: str = Field(
+        description="Brief explanation of the scores (2-3 sentences)"
+    )
+
+
+class ResearchStrategy(BaseModel):
+    """Structured research strategy to guide the supervisor."""
+    
+    priority_angles: list[str] = Field(
+        description="List of research angles ranked by priority",
+        default_factory=list
+    )
+    recommended_focus_areas: list[str] = Field(
+        description="Key areas to focus research efforts",
+        default_factory=list
+    )
+    suggested_methodologies: list[str] = Field(
+        description="Recommended research methodologies",
+        default_factory=list
+    )
+    exploration_summary: str = Field(
+        description="Summary of MCTS exploration process and best path found",
+        default=""
+    )
+
+
 ###################
 # State Definitions
 ###################
@@ -70,6 +187,7 @@ class AgentState(MessagesState):
     raw_notes: Annotated[list[str], override_reducer] = []
     notes: Annotated[list[str], override_reducer] = []
     final_report: str
+    research_strategy: Optional[ResearchStrategy] = None
 
 class SupervisorState(TypedDict):
     """State for the supervisor that manages research tasks."""
@@ -79,6 +197,7 @@ class SupervisorState(TypedDict):
     notes: Annotated[list[str], override_reducer] = []
     research_iterations: int = 0
     raw_notes: Annotated[list[str], override_reducer] = []
+    research_strategy: Optional[ResearchStrategy]
 
 class ResearcherState(TypedDict):
     """State for individual researchers conducting research."""
@@ -94,3 +213,16 @@ class ResearcherOutputState(BaseModel):
     
     compressed_research: str
     raw_notes: Annotated[list[str], override_reducer] = []
+
+
+class MCTSPlannerState(TypedDict):
+    """State for the MCTS planning phase."""
+    
+    research_brief: str
+    nodes: dict[str, MCTSNode]
+    root_node_id: str
+    current_iteration: int
+    max_iterations: int
+    max_depth: int
+    best_path: list[str]
+    research_strategy: Optional[ResearchStrategy]

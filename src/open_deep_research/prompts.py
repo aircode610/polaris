@@ -366,3 +366,117 @@ Remember, your goal is to create a summary that can be easily understood and uti
 
 Today's date is {date}.
 """
+
+
+mcts_expansion_prompt = """You are generating diverse research angles for a research planning system. For context, today's date is {date}.
+
+<Research Brief>
+{research_brief}
+</Research Brief>
+
+<Current Path>
+We are exploring this research path:
+- Research Angle: {current_angle}
+- Focus: {current_focus}
+- Current Depth: {depth} / {max_depth}
+</Current Path>
+
+<Task>
+Generate {branching_factor} diverse research angles that branch from the current path. Each angle should represent a different way to approach the research.
+
+**Requirements:**
+1. Each angle should be distinct and offer a different perspective
+2. Each angle should be specific and actionable for research
+3. Each angle should be relevant to the research brief
+4. Each angle should be feasible to research with web search tools
+
+**For each angle, provide:**
+- **research_angle**: A clear name (4-8 words)
+- **research_focus**: Detailed description of what to focus on (2-4 sentences)
+
+Think creatively across different dimensions:
+- Different perspectives (industry, academic, consumer, etc.)
+- Different timeframes (historical, current, future trends)
+- Different scopes (macro trends vs specific case studies)
+- Different analytical approaches (quantitative vs qualitative)
+</Task>
+
+Generate {branching_factor} diverse research angles now."""
+
+
+mcts_evaluation_prompt = """You are evaluating a research path to predict its quality before execution. For context, today's date is {date}.
+
+<Research Brief>
+{research_brief}
+</Research Brief>
+
+<Research Path to Evaluate>
+- Research Angle: {current_angle}
+- Focus: {current_focus}
+- Depth: {depth}
+</Research Path to Evaluate>
+
+<Task>
+Evaluate this research path on four dimensions (0.0 to 1.0) WITHOUT executing actual research:
+
+1. **COMPREHENSIVENESS** (0.0-1.0): How well would this path cover important aspects?
+   - 0.8-1.0: Excellent coverage, minimal gaps
+   - 0.6-0.8: Good coverage, minor gaps
+   - 0.4-0.6: Adequate coverage, some gaps
+   - 0.2-0.4: Limited coverage, significant gaps
+   - 0.0-0.2: Poor coverage, major omissions
+
+2. **INSIGHT** (0.0-1.0): Would this enable deep, analytical understanding?
+   - 0.8-1.0: Enables deep causal insights
+   - 0.6-0.8: Good analytical potential
+   - 0.4-0.6: Moderate depth possible
+   - 0.2-0.4: Mostly descriptive
+   - 0.0-0.2: Shallow, surface-level
+
+3. **INSTRUCTION FOLLOWING** (0.0-1.0): How well does it align with the research brief?
+   - 0.8-1.0: Precisely aligned with objectives
+   - 0.6-0.8: Well-aligned, minor tangents
+   - 0.4-0.6: Moderately aligned, some drift
+   - 0.2-0.4: Loosely aligned, significant drift
+   - 0.0-0.2: Misaligned with objectives
+
+4. **FEASIBILITY** (0.0-1.0): Likelihood of finding good information?
+   - 0.8-1.0: Highly searchable, abundant sources
+   - 0.6-0.8: Good availability, clear topics
+   - 0.4-0.6: Moderate availability
+   - 0.2-0.4: Limited sources, unclear concepts
+   - 0.0-0.2: Very difficult to research
+
+Also provide a brief reasoning (2-3 sentences) explaining your scores.
+</Task>
+
+Evaluate this research path now."""
+
+
+mcts_strategy_generation_prompt = """You are creating a research strategy based on MCTS exploration results. For context, today's date is {date}.
+
+<Research Brief>
+{research_brief}
+</Research Brief>
+
+<MCTS Exploration Results>
+{exploration_summary}
+</MCTS Exploration Results>
+
+<Best Path Found>
+{best_path_description}
+</Best Path Found>
+
+<Task>
+Create a research strategy to guide the supervisor based on the MCTS exploration. The strategy should help the supervisor conduct better research by prioritizing the most promising angles and focus areas.
+
+**Provide:**
+1. **priority_angles**: List of research angles ranked by priority (most important first)
+2. **recommended_focus_areas**: Key areas to focus research efforts on
+3. **suggested_methodologies**: Recommended research approaches
+4. **exploration_summary**: Brief summary of what the MCTS exploration found (2-3 sentences)
+
+Focus on angles and areas that scored highest on comprehensiveness, insight, instruction following, and feasibility.
+</Task>
+
+Create the research strategy now."""

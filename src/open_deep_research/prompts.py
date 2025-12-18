@@ -452,31 +452,3 @@ Also provide a brief reasoning (2-3 sentences) explaining your scores.
 
 Evaluate this research path now."""
 
-
-mcts_strategy_generation_prompt = """You are creating a research strategy based on MCTS exploration results. For context, today's date is {date}.
-
-<Research Brief>
-{research_brief}
-</Research Brief>
-
-<MCTS Exploration Results>
-{exploration_summary}
-</MCTS Exploration Results>
-
-<Best Path Found>
-{best_path_description}
-</Best Path Found>
-
-<Task>
-Create a research strategy to guide the supervisor based on the MCTS exploration. The strategy should help the supervisor conduct better research by prioritizing the most promising angles and focus areas.
-
-**Provide:**
-1. **priority_angles**: List of research angles ranked by priority (most important first)
-2. **recommended_focus_areas**: Key areas to focus research efforts on
-3. **suggested_methodologies**: Recommended research approaches
-4. **exploration_summary**: Brief summary of what the MCTS exploration found (2-3 sentences)
-
-Focus on angles and areas that scored highest on comprehensiveness, insight, instruction following, and feasibility.
-</Task>
-
-Create the research strategy now."""

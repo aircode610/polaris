@@ -1,6 +1,8 @@
 """Main LangGraph implementation for the Deep Research agent."""
 
 import asyncio
+import math
+import uuid
 from typing import Literal
 
 from langchain.chat_models import init_chat_model
@@ -25,6 +27,8 @@ from open_deep_research.prompts import (
     compress_research_system_prompt,
     final_report_generation_prompt,
     lead_researcher_prompt,
+    mcts_evaluation_prompt,
+    mcts_expansion_prompt,
     research_system_prompt,
     transform_messages_into_research_topic_prompt,
 )
@@ -33,10 +37,15 @@ from open_deep_research.state import (
     AgentState,
     ClarifyWithUser,
     ConductResearch,
+    MCTSNode,
+    MCTSPlannerState,
+    PathEvaluation,
+    ResearchAngles,
     ResearchComplete,
     ResearcherOutputState,
     ResearcherState,
     ResearchQuestion,
+    ResearchStrategy,
     SupervisorState,
 )
 from open_deep_research.utils import (
@@ -115,19 +124,18 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
         )
 
 
-async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["research_supervisor"]]:
-    """Transform user messages into a structured research brief and initialize supervisor.
+async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["mcts_planner"]]:
+    """Transform user messages into a structured research brief and proceed to MCTS planning.
     
     This function analyzes the user's messages and generates a focused research brief
-    that will guide the research supervisor. It also sets up the initial supervisor
-    context with appropriate prompts and instructions.
+    that will guide the MCTS planner and research supervisor.
     
     Args:
         state: Current agent state containing user messages
         config: Runtime configuration with model settings
         
     Returns:
-        Command to proceed to research supervisor with initialized context
+        Command to proceed to MCTS planner with research brief
     """
     # Step 1: Set up the research model for structured output
     configurable = Configuration.from_runnable_config(config)
@@ -153,25 +161,361 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     )
     response = await research_model.ainvoke([HumanMessage(content=prompt_content)])
     
-    # Step 3: Initialize supervisor with research brief and instructions
+    return Command(
+        goto="mcts_planner", 
+        update={
+            "research_brief": response.research_brief,
+        }
+    )
+
+
+async def mcts_planner(state: AgentState, config: RunnableConfig) -> Command[Literal["research_supervisor"]]:
+    """MCTS planning phase to explore research paths and create optimal strategy.
+    
+    This function performs a lightweight exploration of different research directions
+    using Monte Carlo Tree Search, then provides structured guidance to the supervisor.
+    
+    Args:
+        state: Current agent state with research brief
+        config: Runtime configuration with model settings
+        
+    Returns:
+        Command to proceed to research supervisor with strategy
+    """
+    
+    # Step 1: Get configuration and set MCTS parameters
+    configurable = Configuration.from_runnable_config(config)
+    research_brief = state.get("research_brief", "")
+    
+    # MCTS configuration (using defaults if not in config)
+    max_iterations = getattr(configurable, 'mcts_max_iterations', 10)
+    max_depth = getattr(configurable, 'mcts_max_depth', 3)
+    branching_factor = getattr(configurable, 'mcts_branching_factor', 3)
+    exploration_constant = getattr(configurable, 'mcts_exploration_constant', 1.414)
+    
+    # Step 2: Initialize MCTS tree with root node
+    root_node = MCTSNode(
+        node_id="root",
+        parent_id=None,
+        depth=0,
+        research_angle="Root: Original Research Brief",
+        research_focus=research_brief
+    )
+    
+    mcts_state: MCTSPlannerState = {
+        "research_brief": research_brief,
+        "nodes": {"root": root_node},
+        "root_node_id": "root",
+        "current_iteration": 0,
+        "max_iterations": max_iterations,
+        "max_depth": max_depth,
+        "best_path": ["root"],
+        "research_strategy": None
+    }
+    
+    # Step 3: Run MCTS iterations
+    for iteration in range(max_iterations):
+        mcts_state["current_iteration"] = iteration
+        
+        # Selection: Select node using UCB1
+        selected_node_id = _select_node(mcts_state, exploration_constant)
+        selected_node = mcts_state["nodes"][selected_node_id]
+        
+        # Expansion: Generate child nodes if not terminal
+        if not selected_node.is_terminal and not selected_node.is_fully_expanded:
+            new_node_ids = await _expand_node(
+                selected_node_id, 
+                mcts_state, 
+                branching_factor,
+                configurable,
+                config
+            )
+        else:
+            new_node_ids = [selected_node_id]
+        
+        # Simulation: Evaluate new nodes
+        for node_id in new_node_ids:
+            value = await _evaluate_node(node_id, mcts_state, configurable, config)
+            
+            # Backpropagation: Update values up the tree
+            _backpropagate(node_id, value, mcts_state)
+    
+    # Step 4: Create research strategy from best path
+    research_strategy = _create_research_strategy(mcts_state)
+    
+    # Step 5: Enhance supervisor prompt with strategy
     supervisor_system_prompt = lead_researcher_prompt.format(
         date=get_today_str(),
         max_concurrent_research_units=configurable.max_concurrent_research_units,
         max_researcher_iterations=configurable.max_researcher_iterations
     )
     
+    # Add strategy context to supervisor prompt if available
+    if research_strategy and research_strategy.priority_angles:
+        strategy_context = f"\n\n<Research Strategy from MCTS Planning>\n"
+        strategy_context += f"Priority research angles: {', '.join(research_strategy.priority_angles[:3])}\n"
+        strategy_context += f"Recommended focus areas: {', '.join(research_strategy.recommended_focus_areas[:3])}\n"
+        strategy_context += f"Exploration summary: {research_strategy.exploration_summary}\n"
+        strategy_context += "</Research Strategy from MCTS Planning>"
+        supervisor_system_prompt += strategy_context
+    
     return Command(
-        goto="research_supervisor", 
+        goto="research_supervisor",
         update={
-            "research_brief": response.research_brief,
+            "research_strategy": research_strategy,
             "supervisor_messages": {
                 "type": "override",
                 "value": [
                     SystemMessage(content=supervisor_system_prompt),
-                    HumanMessage(content=response.research_brief)
+                    HumanMessage(content=research_brief)
                 ]
             }
         }
+    )
+
+
+def _select_node(mcts_state: MCTSPlannerState, exploration_constant: float) -> str:
+    """Select the most promising node for expansion using UCB1."""
+    current_node_id = mcts_state["root_node_id"]
+    nodes = mcts_state["nodes"]
+    
+    while True:
+        current_node = nodes[current_node_id]
+        
+        # Stop if terminal or needs expansion
+        if current_node.is_terminal or not current_node.is_fully_expanded or not current_node.children_ids:
+            return current_node_id
+        
+        # Select best child using UCB1
+        parent_visits = current_node.visit_count
+        best_child_id = max(
+            current_node.children_ids,
+            key=lambda child_id: _ucb1_score(
+                nodes[child_id],
+                parent_visits,
+                exploration_constant
+            )
+        )
+        
+        current_node_id = best_child_id
+        
+        # Prevent infinite loops at max depth
+        if nodes[current_node_id].depth >= mcts_state["max_depth"]:
+            nodes[current_node_id].is_terminal = True
+            return current_node_id
+
+
+def _ucb1_score(node: MCTSNode, parent_visits: int, exploration_constant: float) -> float:
+    """Calculate UCB1 score for node selection."""
+    if node.visit_count == 0:
+        return float('inf')
+    
+    exploitation = node.total_value / node.visit_count if node.visit_count > 0 else 0.0
+    exploration = exploration_constant * math.sqrt(
+        math.log(parent_visits) / node.visit_count
+    )
+    return exploitation + exploration
+
+
+async def _expand_node(
+    node_id: str,
+    mcts_state: MCTSPlannerState,
+    branching_factor: int,
+    configurable: Configuration,
+    config: RunnableConfig
+) -> list[str]:
+    """Expand a node by generating child nodes representing different research angles."""
+    
+    parent_node = mcts_state["nodes"][node_id]
+    
+    # Don't expand beyond max depth
+    if parent_node.depth >= mcts_state["max_depth"]:
+        parent_node.is_terminal = True
+        parent_node.is_fully_expanded = True
+        return []
+    
+    # Generate diverse research angles using LLM
+    expansion_prompt_text = mcts_expansion_prompt.format(
+        research_brief=mcts_state["research_brief"],
+        current_angle=parent_node.research_angle,
+        current_focus=parent_node.research_focus,
+        depth=parent_node.depth,
+        max_depth=mcts_state["max_depth"],
+        branching_factor=branching_factor,
+        date=get_today_str()
+    )
+    
+    model_config = {
+        "model": configurable.research_model,
+        "max_tokens": configurable.research_model_max_tokens,
+        "api_key": get_api_key_for_model(configurable.research_model, config),
+        "tags": ["langsmith:nostream"]
+    }
+    
+    research_model = (
+        configurable_model
+        .with_structured_output(ResearchAngles)
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+        .with_config(model_config)
+    )
+    
+    try:
+        response = await research_model.ainvoke([
+            HumanMessage(content=expansion_prompt_text)
+        ])
+    except Exception as e:
+        parent_node.is_fully_expanded = True
+        parent_node.is_terminal = True
+        return []
+    
+    # Create child nodes from suggested angles
+    new_node_ids = []
+    for idx, angle in enumerate(response.angles[:branching_factor]):
+        child_id = f"{node_id}_c{idx}_{uuid.uuid4().hex[:6]}"
+        
+        child_node = MCTSNode(
+            node_id=child_id,
+            parent_id=node_id,
+            depth=parent_node.depth + 1,
+            research_angle=angle.get("research_angle", ""),
+            research_focus=angle.get("research_focus", "")
+        )
+        
+        mcts_state["nodes"][child_id] = child_node
+        new_node_ids.append(child_id)
+    
+    # Update parent
+    parent_node.children_ids.extend(new_node_ids)
+    parent_node.is_fully_expanded = True
+    
+    return new_node_ids
+
+
+async def _evaluate_node(
+    node_id: str,
+    mcts_state: MCTSPlannerState,
+    configurable: Configuration,
+    config: RunnableConfig
+) -> float:
+    """Evaluate a research path without executing full research."""
+    node = mcts_state["nodes"][node_id]
+    
+    # Create evaluation prompt
+    eval_prompt_text = mcts_evaluation_prompt.format(
+        research_brief=mcts_state["research_brief"],
+        current_angle=node.research_angle,
+        current_focus=node.research_focus,
+        depth=node.depth,
+        date=get_today_str()
+    )
+    
+    model_config = {
+        "model": configurable.research_model,
+        "max_tokens": configurable.research_model_max_tokens,
+        "api_key": get_api_key_for_model(configurable.research_model, config),
+        "tags": ["langsmith:nostream"]
+    }
+    
+    evaluation_model = (
+        configurable_model
+        .with_structured_output(PathEvaluation)
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+        .with_config(model_config)
+    )
+    
+    try:
+        evaluation = await evaluation_model.ainvoke([
+            HumanMessage(content=eval_prompt_text)
+        ])
+    except Exception as e:
+        # Return conservative estimate on failure
+        return 0.5
+    
+    # Update node scores
+    node.comprehensiveness_score = evaluation.comprehensiveness_score
+    node.insight_score = evaluation.insight_score
+    node.instruction_following_score = evaluation.instruction_following_score
+    node.feasibility_score = evaluation.feasibility_score
+    
+    # Return combined score as value (weighted average)
+    combined_score = (
+        0.30 * node.comprehensiveness_score +
+        0.30 * node.insight_score +
+        0.25 * node.instruction_following_score +
+        0.15 * node.feasibility_score
+    )
+    return combined_score
+
+
+def _backpropagate(node_id: str, value: float, mcts_state: MCTSPlannerState):
+    """Backpropagate the evaluation value up the tree."""
+    current_node_id = node_id
+    nodes = mcts_state["nodes"]
+    
+    while current_node_id is not None:
+        node = nodes[current_node_id]
+        node.visit_count += 1
+        node.total_value += value
+        current_node_id = node.parent_id
+
+
+def _create_research_strategy(mcts_state: MCTSPlannerState) -> ResearchStrategy:
+    """Extract the best research path and create a structured strategy."""
+    nodes = mcts_state["nodes"]
+    root_id = mcts_state["root_node_id"]
+    
+    # Find best path from root using average values
+    best_path = [root_id]
+    current_id = root_id
+    
+    while nodes[current_id].children_ids:
+        children_with_visits = [
+            cid for cid in nodes[current_id].children_ids 
+            if nodes[cid].visit_count > 0
+        ]
+        
+        if not children_with_visits:
+            break
+        
+        best_child_id = max(
+            children_with_visits,
+            key=lambda cid: nodes[cid].total_value / nodes[cid].visit_count if nodes[cid].visit_count > 0 else 0.0
+        )
+        best_path.append(best_child_id)
+        current_id = best_child_id
+    
+    mcts_state["best_path"] = best_path
+    
+    # Build strategy from best path
+    priority_angles = []
+    focus_areas = []
+    methodologies = []
+    
+    # Add nodes from best path
+    for node_id in best_path[1:]:  # Skip root
+        node = nodes[node_id]
+        priority_angles.append(node.research_angle)
+        focus_areas.append(node.research_focus)
+    
+    # Create exploration summary
+    total_nodes = len(nodes)
+    visited_nodes = [n for n in nodes.values() if n.visit_count > 0]
+    max_value = max(
+        (n.total_value / n.visit_count for n in visited_nodes),
+        default=0.0
+    )
+    
+    exploration_summary = (
+        f"Explored {total_nodes} research paths across {mcts_state['max_depth']} depth levels. "
+        f"Best path achieves expected quality score of {max_value:.2f}. "
+        f"Strategy based on {mcts_state['max_iterations']} MCTS iterations."
+    )
+    
+    return ResearchStrategy(
+        priority_angles=priority_angles,
+        recommended_focus_areas=focus_areas,
+        suggested_methodologies=methodologies,
+        exploration_summary=exploration_summary
     )
 
 
@@ -257,7 +601,8 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
             goto=END,
             update={
                 "notes": get_notes_from_tool_calls(supervisor_messages),
-                "research_brief": state.get("research_brief", "")
+                "research_brief": state.get("research_brief", ""),
+                "research_strategy": state.get("research_strategy")
             }
         )
     
@@ -337,7 +682,8 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                     goto=END,
                     update={
                         "notes": get_notes_from_tool_calls(supervisor_messages),
-                        "research_brief": state.get("research_brief", "")
+                        "research_brief": state.get("research_brief", ""),
+                        "research_strategy": state.get("research_strategy")
                     }
                 )
     
@@ -707,11 +1053,14 @@ deep_researcher_builder = StateGraph(
 # Add main workflow nodes for the complete research process
 deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)           # User clarification phase
 deep_researcher_builder.add_node("write_research_brief", write_research_brief)     # Research planning phase
+deep_researcher_builder.add_node("mcts_planner", mcts_planner)                    # MCTS planning phase
 deep_researcher_builder.add_node("research_supervisor", supervisor_subgraph)       # Research execution phase
 deep_researcher_builder.add_node("final_report_generation", final_report_generation)  # Report generation phase
 
 # Define main workflow edges for sequential execution
 deep_researcher_builder.add_edge(START, "clarify_with_user")                       # Entry point
+deep_researcher_builder.add_edge("write_research_brief", "mcts_planner")           # Brief to MCTS planning
+deep_researcher_builder.add_edge("mcts_planner", "research_supervisor")           # MCTS planning to supervisor
 deep_researcher_builder.add_edge("research_supervisor", "final_report_generation") # Research to report
 deep_researcher_builder.add_edge("final_report_generation", END)                   # Final exit point
 

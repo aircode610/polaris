@@ -99,11 +99,22 @@ class MCTSNode(BaseModel):
     is_fully_expanded: bool = Field(default=False, description="All children have been generated")
 
 
+class ResearchAngle(BaseModel):
+    """A single research angle for node expansion."""
+    
+    research_angle: str = Field(
+        description="Name of the research angle (4-8 words)"
+    )
+    research_focus: str = Field(
+        description="Detailed description of the research focus (2-4 sentences)"
+    )
+
+
 class ResearchAngles(BaseModel):
     """Collection of research angles for node expansion."""
     
-    angles: list[dict] = Field(
-        description="List of diverse research angles. Each angle is a dictionary with 'research_angle' (name, 4-8 words) and 'research_focus' (detailed description, 2-4 sentences)",
+    angles: list[ResearchAngle] = Field(
+        description="List of diverse research angles. Each angle has a 'research_angle' (name, 4-8 words) and 'research_focus' (detailed description, 2-4 sentences)",
         min_items=1,
         max_items=5
     )

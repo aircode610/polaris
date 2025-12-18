@@ -253,9 +253,26 @@ async def mcts_planner(state: AgentState, config: RunnableConfig) -> Command[Lit
     # Add strategy context to supervisor prompt if available
     if research_strategy and research_strategy.priority_angles:
         strategy_context = f"\n\n<Research Strategy from MCTS Planning>\n"
-        strategy_context += f"Priority research angles: {', '.join(research_strategy.priority_angles[:3])}\n"
-        strategy_context += f"Recommended focus areas: {', '.join(research_strategy.recommended_focus_areas[:3])}\n"
-        strategy_context += f"Exploration summary: {research_strategy.exploration_summary}\n"
+        strategy_context += "The MCTS planner has explored multiple research paths and identified the following promising directions. "
+        strategy_context += "**Use these as prioritized starting points, but do not limit yourself to only these angles.** "
+        strategy_context += "You should also explore other relevant topics that may be important for comprehensive research.\n\n"
+        strategy_context += "**Priority Research Angles (suggested starting points, in order of importance):**\n"
+        for i, angle in enumerate(research_strategy.priority_angles[:5], 1):
+            strategy_context += f"  {i}. {angle}\n"
+        strategy_context += "\n**Recommended Focus Areas:**\n"
+        for i, area in enumerate(research_strategy.recommended_focus_areas[:5], 1):
+            strategy_context += f"  {i}. {area}\n"
+        strategy_context += f"\n**Planning Summary:** {research_strategy.exploration_summary}\n"
+        strategy_context += "\n**Guidance:** Start your research with the above priority angles, but also identify and explore other important aspects "
+        strategy_context += "of the research question that may not be in this list. The MCTS plan is a helpful guide, not a strict constraint. "
+        strategy_context += "Your goal is comprehensive research coverage, so balance following the plan with exploring other relevant topics.\n"
+        strategy_context += "</Research Strategy from MCTS Planning>"
+        supervisor_system_prompt += strategy_context
+    elif research_strategy:
+        # Even if no priority angles, still include the strategy context
+        strategy_context = f"\n\n<Research Strategy from MCTS Planning>\n"
+        strategy_context += f"**Planning Summary:** {research_strategy.exploration_summary}\n"
+        strategy_context += "Use this as general guidance, but ensure you explore all relevant aspects of the research question.\n"
         strategy_context += "</Research Strategy from MCTS Planning>"
         supervisor_system_prompt += strategy_context
     
@@ -368,17 +385,32 @@ async def _expand_node(
         parent_node.is_terminal = True
         return []
     
+    # Ensure we have a valid response with angles
+    if not hasattr(response, 'angles') or not response.angles:
+        parent_node.is_fully_expanded = True
+        parent_node.is_terminal = True
+        return []
+    
     # Create child nodes from suggested angles
     new_node_ids = []
     for idx, angle in enumerate(response.angles[:branching_factor]):
         child_id = f"{node_id}_c{idx}_{uuid.uuid4().hex[:6]}"
         
+        # Handle both Pydantic model and dict formats
+        if isinstance(angle, dict):
+            research_angle = angle.get("research_angle", "")
+            research_focus = angle.get("research_focus", "")
+        else:
+            # Pydantic model - use attribute access
+            research_angle = angle.research_angle
+            research_focus = angle.research_focus
+        
         child_node = MCTSNode(
             node_id=child_id,
             parent_id=node_id,
             depth=parent_node.depth + 1,
-            research_angle=angle.get("research_angle", ""),
-            research_focus=angle.get("research_focus", "")
+            research_angle=research_angle,
+            research_focus=research_focus
         )
         
         mcts_state["nodes"][child_id] = child_node

@@ -96,8 +96,9 @@ You have access to three main tools:
 Think like a research manager with limited time and resources. Follow these steps:
 
 1. **Read the question carefully** - What specific information does the user need?
-2. **Decide how to delegate the research** - Carefully consider the question and decide how to delegate the research. Are there multiple independent directions that can be explored simultaneously?
-3. **After each call to ConductResearch, pause and assess** - Do I have enough to answer? What's still missing?
+2. **Consider the MCTS planning strategy as guidance** - If a research strategy from MCTS planning is provided below, use it as a helpful guide for prioritizing research angles. The MCTS planner has explored different research paths and identified promising directions. However, **do not limit yourself to only these angles** - the MCTS plan is a starting point, not a constraint. You should also explore other relevant topics that may not have been in the top MCTS results but are important for comprehensive research.
+3. **Decide how to delegate the research** - Carefully consider the question, the MCTS strategy (if available), and your own analysis to decide how to delegate the research. Are there multiple independent directions that can be explored simultaneously? Start with the MCTS-suggested angles, but also identify and explore other important angles that might be missing from the MCTS plan.
+4. **After each call to ConductResearch, pause and assess** - Do I have enough to answer? What's still missing? Have I covered both the MCTS priority angles AND other important aspects of the research question?
 </Instructions>
 
 <Hard Limits>

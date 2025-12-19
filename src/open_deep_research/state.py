@@ -47,7 +47,6 @@ class ResearchQuestion(BaseModel):
         description="A research question that will be used to guide the research.",
     )
 
-
 class MCTSNode(BaseModel):
     """Represents a node in the MCTS search tree for research planning."""
     
@@ -98,7 +97,6 @@ class MCTSNode(BaseModel):
     is_terminal: bool = Field(default=False, description="Whether this is a terminal node")
     is_fully_expanded: bool = Field(default=False, description="All children have been generated")
 
-
 class ResearchAngle(BaseModel):
     """A single research angle for node expansion."""
     
@@ -109,7 +107,6 @@ class ResearchAngle(BaseModel):
         description="Detailed description of the research focus (2-4 sentences)"
     )
 
-
 class ResearchAngles(BaseModel):
     """Collection of research angles for node expansion."""
     
@@ -118,7 +115,6 @@ class ResearchAngles(BaseModel):
         min_items=1,
         max_items=5
     )
-
 
 class PathEvaluation(BaseModel):
     """Evaluation of a research path without executing research."""
@@ -146,7 +142,6 @@ class PathEvaluation(BaseModel):
     reasoning: str = Field(
         description="Brief explanation of the scores (2-3 sentences)"
     )
-
 
 class ResearchStrategy(BaseModel):
     """Structured research strategy to guide the supervisor."""
@@ -217,7 +212,6 @@ class ResearcherOutputState(BaseModel):
     
     compressed_research: str
     raw_notes: Annotated[list[str], override_reducer] = []
-
 
 class MCTSPlannerState(TypedDict):
     """State for the MCTS planning phase."""
